@@ -1,0 +1,333 @@
+import org.apache.tools.ant.filters.*
+
+plugins {
+    id 'java-library'
+    id 'idea'
+    id 'eclipse'
+    id 'maven-publish'
+    id 'jacoco'
+    id 'signing'
+    id 'org.owasp.dependencycheck' version '13.0.0'
+    id 'com.gradleup.shadow' version '9.6.1'
+    id 'org.jreleaser' version '1.26.0'
+}
+
+ext {
+    seleniumVersion = project.property('selenium.version')
+    appiumClientVersion = project.property('appiumClient.version')
+    slf4jVersion = '2.0.19'
+}
+
+group = 'io.appium'
+version = appiumClientVersion
+
+repositories {
+    mavenCentral()
+
+    // Only add Selenium snapshot repo when resolving a SNAPSHOT version.
+    // Release versions (e.g. from gradle.properties) resolve from Maven Central only.
+    if (project.property('selenium.version').toString().contains('SNAPSHOT')) {
+        maven {
+            name = 'Central Portal Snapshots'
+            url = 'https://central.sonatype.com/repository/maven-snapshots/'
+            mavenContent {
+                snapshotsOnly()
+            }
+            content {
+                includeGroup("org.seleniumhq.selenium")
+            }
+        }
+    }
+}
+
+configurations.configureEach {
+    resolutionStrategy.cacheChangingModulesFor 1, 'minutes'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+    withJavadocJar()
+    withSourcesJar()
+}
+
+dependencies {
+    compileOnly 'org.projectlombok:lombok:1.18.48'
+    annotationProcessor 'org.projectlombok:lombok:1.18.48'
+
+    // Pin exact Selenium version when using a SNAPSHOT (needs snapshot repo); otherwise use version range.
+    if (seleniumVersion.toString().contains('SNAPSHOT')) {
+        api "org.seleniumhq.selenium:selenium-api:${seleniumVersion}"
+        api "org.seleniumhq.selenium:selenium-remote-driver:${seleniumVersion}"
+        api "org.seleniumhq.selenium:selenium-support:${seleniumVersion}"
+    } else {
+        api('org.seleniumhq.selenium:selenium-api') {
+            version {
+                strictly "[${seleniumVersion}, 5.0)"
+                prefer "${seleniumVersion}"
+            }
+        }
+        api('org.seleniumhq.selenium:selenium-remote-driver') {
+            version {
+                strictly "[${seleniumVersion}, 5.0)"
+                prefer "${seleniumVersion}"
+            }
+        }
+        api('org.seleniumhq.selenium:selenium-support') {
+            version {
+                strictly "[${seleniumVersion}, 5.0)"
+                prefer "${seleniumVersion}"
+            }
+        }
+    }
+    implementation 'com.google.code.gson:gson:2.14.0'
+    implementation "org.slf4j:slf4j-api:${slf4jVersion}"
+    implementation 'org.jspecify:jspecify:1.0.1'
+}
+
+dependencyCheck {
+    failBuildOnCVSS = 22
+}
+
+jacoco {
+    toolVersion = '0.8.13'
+}
+
+tasks.withType(JacocoReport).configureEach {
+    description = 'Generate Jacoco coverage reports after running tests'
+    sourceSets sourceSets.main
+    reports {
+        html.required = true
+        html.outputLocation = file("${buildDir}/Reports/jacoco")
+    }
+}
+jacocoTestReport.dependsOn test
+
+apply plugin: 'checkstyle'
+
+checkstyle {
+    toolVersion = '10.23.1'
+    configFile = configDirectory.file('appium-style.xml').get().getAsFile()
+    showViolations = true
+    ignoreFailures = false
+}
+
+javadoc {
+    options.addStringOption('encoding', 'UTF-8')
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            groupId = 'io.appium'
+            artifactId = 'java-client'
+            version = appiumClientVersion
+            from components.java
+            pom {
+                name = 'java-client'
+                description = 'Java client for Appium Mobile Webdriver'
+                url = 'http://appium.io'
+                developers {
+                    developer {
+                        name = 'Jonah Stiennon'
+                        email = 'jonahss@gmail.com'
+                        url = 'https://github.com/jonahss'
+                        id = 'jonahss'
+                    }
+                    developer {
+                        name = 'Sergey Tikhomirov'
+                        email = 'tichomirovsergey@gmail.com'
+                        url = 'https://github.com/TikhomirovSergey'
+                        id = 'TikhomirovSergey'
+                    }
+                    developer {
+                        name = 'Srinivasan Sekar'
+                        email = 'srinivasan.sekar1990@gmail.com'
+                        url = 'https://github.com/SrinivasanTarget'
+                        id = 'SrinivasanTarget'
+                    }
+                    developer {
+                        name = 'Mykola Mokhnach'
+                        url = 'https://github.com/mykola-mokhnach'
+                        id = 'mykola-mokhnach'
+                    }
+                    developer {
+                        name = 'Valery Yatsynovich'
+                        url = 'https://github.com/valfirst'
+                        id = 'valfirst'
+                    }
+                }
+                licenses {
+                    license {
+                        name = 'Apache License, Version 2.0'
+                        url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                        distribution = 'repo'
+                    }
+                }
+                scm {
+                    url = 'https://github.com/appium/java-client'
+                    connection = 'scm:git:ssh://git@github.com/appium/java-client.git'
+                    developerConnection = 'scm:git:ssh://git@github.com/appium/java-client.git'
+                    tag = 'HEAD'
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            url = layout.buildDirectory.dir('staging-deploy')
+        }
+    }
+}
+
+jreleaser {
+    signing {
+        active = 'ALWAYS'
+        armored = true
+    }
+    deploy {
+        maven {
+            mavenCentral {
+                sonatype {
+                    active = 'ALWAYS'
+                    url = 'https://central.sonatype.com/api/v1/publisher'
+                    stagingRepository('build/staging-deploy')
+                }
+            }
+        }
+    }
+}
+
+wrapper {
+    gradleVersion = '9.1.0'
+    distributionType = Wrapper.DistributionType.ALL
+}
+
+processResources {
+    filter ReplaceTokens, tokens: [
+            'selenium.version'    : seleniumVersion,
+            'appiumClient.version': appiumClientVersion
+    ]
+}
+
+testing {
+    suites {
+        configureEach {
+            useJUnitJupiter()
+            dependencies {
+                implementation 'org.junit.jupiter:junit-jupiter:5.14.4'
+                runtimeOnly 'org.junit.platform:junit-platform-launcher'
+                implementation 'org.hamcrest:hamcrest:3.0'
+                runtimeOnly "org.slf4j:slf4j-simple:${slf4jVersion}"
+            }
+            targets.configureEach {
+                testTask.configure {
+                    testLogging {
+                        showStandardStreams = true
+                        exceptionFormat = 'full'
+                    }
+                }
+            }
+        }
+
+        test {
+            dependencies {
+                implementation "org.seleniumhq.selenium:selenium-chrome-driver:${seleniumVersion}"
+                implementation('io.github.bonigarcia:webdrivermanager:6.3.4') {
+                    exclude group: 'org.seleniumhq.selenium'
+                }
+            }
+            targets.configureEach {
+                testTask.configure {
+                    finalizedBy jacocoTestReport
+                }
+            }
+        }
+
+        e2eIosTest(JvmTestSuite) {
+            sources {
+                java {
+                    srcDirs = ['src/e2eIosTest/java']
+                }
+            }
+            dependencies {
+                implementation project()
+                implementation(sourceSets.test.output)
+                implementation('org.apache.commons:commons-lang3:3.20.0')
+            }
+
+            targets.configureEach {
+                testTask.configure {
+                    shouldRunAfter(test)
+                    filter {
+                        exclude '**/IOSScreenRecordTest.class'
+                        exclude '**/ImagesComparisonTest.class'
+                        exclude '**/IOSNativeWebTapSettingTest.class'
+                    }
+                }
+            }
+        }
+
+        e2eAndroidTest(JvmTestSuite) {
+            sources {
+                java {
+                    srcDirs = ['src/e2eAndroidTest/java']
+                }
+            }
+            dependencies {
+                implementation project()
+                implementation(sourceSets.test.output)
+                implementation('io.github.bonigarcia:webdrivermanager:6.3.4') {
+                    exclude group: 'org.seleniumhq.selenium'
+                }
+            }
+
+            targets.configureEach {
+                testTask.configure {
+                    shouldRunAfter(test)
+                    filter {
+                        // The following tests fail and should be reviewed/fixed
+                        exclude '**/AndroidAbilityToUseSupplierTest.class'
+                        exclude '**/AndroidConnectionTest.class'
+                        exclude '**/AndroidContextTest.class'
+                        exclude '**/AndroidDataMatcherTest.class'
+                        exclude '**/AndroidDriverTest.class'
+                        exclude '**/AndroidElementTest.class'
+                        exclude '**/AndroidFunctionTest.class'
+                        exclude '**/AndroidSearchingTest.class'
+                        exclude '**/AndroidTouchTest.class'
+                        exclude '**/AndroidViewMatcherTest.class'
+                        exclude '**/ExecuteCDPCommandTest.class'
+                        exclude '**/ExecuteDriverScriptTest.class'
+                        exclude '**/FingerPrintTest.class'
+                        exclude '**/ImagesComparisonTest.class'
+                        exclude '**/KeyCodeTest.class'
+                        exclude '**/LogEventTest.class'
+                        exclude '**/UIAutomator2Test.class'
+                        exclude '**/AndroidPageObjectTest.class'
+                        exclude '**/MobileBrowserCompatibilityTest.class'
+                    }
+                }
+            }
+        }
+
+        e2eFlutterTest(JvmTestSuite) {
+            sources {
+                java {
+                    srcDirs = ['src/e2eFlutterTest/java']
+                }
+            }
+            dependencies {
+                implementation project()
+                implementation(sourceSets.test.output)
+            }
+
+            targets.configureEach {
+                testTask.configure {
+                    shouldRunAfter(test)
+                    systemProperties project.properties.subMap(["platform", "flutterApp"])
+                }
+            }
+        }
+    }
+}

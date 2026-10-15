@@ -1,0 +1,171 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * See the NOTICE file distributed with this work for additional
+ * information regarding copyright ownership.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.appium.java_client.ios;
+
+import io.appium.java_client.Location;
+import io.appium.java_client.appmanagement.ApplicationState;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+import org.openqa.selenium.ScreenOrientation;
+import org.openqa.selenium.WebDriverException;
+import org.openqa.selenium.remote.RemoteWebElement;
+import org.openqa.selenium.remote.Response;
+import org.openqa.selenium.remote.http.HttpMethod;
+
+import java.time.Duration;
+import java.util.Map;
+
+import static io.appium.java_client.utils.TestUtils.waitUntilTrue;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.greaterThan;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+
+public class IOSDriverTest extends AppIOSTest {
+    @BeforeEach
+    public void setupEach() {
+        if (driver.queryAppState(BUNDLE_ID).ordinal() < ApplicationState.RUNNING_IN_FOREGROUND.ordinal()) {
+            driver.activateApp(BUNDLE_ID);
+        }
+    }
+
+    @Test
+    public void addCustomCommandTest() {
+        driver.addCommand(HttpMethod.GET, "/appium/sessions", "getSessions");
+        final Response getSessions = driver.execute("getSessions");
+        assertNotNull(getSessions.getSessionId());
+    }
+
+    @Test
+    public void addCustomCommandWithSessionIdTest() {
+        driver.addCommand(HttpMethod.GET, "/session/" + driver.getSessionId() + "/appium/settings",
+                "getSessionSettings");
+        final Response getSessionSettings = driver.execute("getSessionSettings");
+        assertNotNull(getSessionSettings.getSessionId());
+    }
+
+    @Test
+    public void addCustomCommandWithElementIdTest() {
+        var usernameEdit = driver.findElement(USERNAME_EDIT_PREDICATE);
+        driver.addCommand(HttpMethod.POST,
+                String.format("/session/%s/appium/element/%s/value", driver.getSessionId(),
+                        ((RemoteWebElement) usernameEdit).getId()), "setNewValue");
+        final Response setNewValue = driver.execute("setNewValue",
+                Map.of("id", ((RemoteWebElement) usernameEdit).getId(), "text", "foo"));
+        assertNotNull(setNewValue.getSessionId());
+    }
+
+    @Test
+    public void getDeviceTimeTest() {
+        String time = driver.getDeviceTime();
+        assertFalse(time.isEmpty());
+    }
+
+    @Test public void resetTest() {
+        driver.executeScript("mobile: terminateApp", Map.of("bundleId", BUNDLE_ID));
+        driver.executeScript("mobile: activateApp", Map.of("bundleId", BUNDLE_ID));
+    }
+
+    @Disabled
+    @Test public void geolocationTest() {
+        Location location = new Location(45, 45, 100.0);
+        try {
+            driver.setLocation(location);
+        } catch (Exception e) {
+            fail("Not able to set location");
+        }
+    }
+
+    @Test public void orientationTest() {
+        rotateWithRetry(ScreenOrientation.LANDSCAPE);
+        waitUntilTrue(
+                () -> driver.getOrientation() == ScreenOrientation.LANDSCAPE,
+                Duration.ofSeconds(5), Duration.ofMillis(500)
+        );
+
+        rotateWithRetry(ScreenOrientation.PORTRAIT);
+        waitUntilTrue(
+                () -> driver.getOrientation() == ScreenOrientation.PORTRAIT,
+                Duration.ofSeconds(5), Duration.ofMillis(500)
+        );
+    }
+
+    @Test public void lockTest() {
+        try {
+            driver.lockDevice();
+            assertTrue(driver.isDeviceLocked());
+        } finally {
+            driver.unlockDevice();
+            assertFalse(driver.isDeviceLocked());
+        }
+    }
+
+    @Test public void pullFileTest() {
+        byte[] data = driver.pullFile(String.format("@%s/VodQAReactNative", BUNDLE_ID));
+        assertThat(data.length, greaterThan(0));
+    }
+
+    @Test public void keyboardTest() {
+        driver.findElement(USERNAME_EDIT_PREDICATE).click();
+        assertTrue(driver.isKeyboardShown());
+    }
+
+    @Test
+    public void putAppIntoBackgroundAndRestoreTest() {
+        final long msStarted = System.currentTimeMillis();
+        driver.runAppInBackground(Duration.ofSeconds(4));
+        assertThat(System.currentTimeMillis() - msStarted, greaterThan(3000L));
+    }
+
+    @Test
+    public void applicationsManagementTest() {
+        driver.runAppInBackground(Duration.ofSeconds(-1));
+        waitUntilTrue(
+                () -> driver.queryAppState(BUNDLE_ID).ordinal() < ApplicationState.RUNNING_IN_FOREGROUND.ordinal(),
+                Duration.ofSeconds(10), Duration.ofSeconds(1));
+        driver.activateApp(BUNDLE_ID);
+        waitUntilTrue(
+                () -> driver.queryAppState(BUNDLE_ID) == ApplicationState.RUNNING_IN_FOREGROUND,
+                Duration.ofSeconds(10), Duration.ofSeconds(1));
+    }
+
+    private void rotateWithRetry(ScreenOrientation orientation) {
+        final int maxRetries = 3;
+        final Duration retryDelay = Duration.ofSeconds(1);
+
+        for (int attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                driver.rotate(orientation);
+                return;
+            } catch (WebDriverException e) {
+                if (attempt < maxRetries - 1) {
+                    try {
+                        Thread.sleep(retryDelay.toMillis());
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException(ie);
+                    }
+                    continue;
+                }
+                throw e;
+            }
+        }
+    }
+}
